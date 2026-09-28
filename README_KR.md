@@ -4,6 +4,12 @@
 
 > **프로젝트 상태: 일시 중단 / 경량화 재설계 예정**
 
+<p align="center">
+  <img src="docs/images/v1-prototype.svg" width="760" alt="Version 1 4족 보행 로봇 프로토타입">
+  <br>
+  <sub>보행 중심 재설계 이전의 Version 1 프로토타입</sub>
+</p>
+
 개인적으로 제작하고 있는 4족 보행 로봇 프로젝트입니다.
 
 초기 버전은 단순한 보행 로봇이 아니라 머리, 귀, 꼬리, 디스플레이, 카메라, 스피커, 센서 등을 포함한 비교적 많은 기능을 가진 로봇개를 목표로 설계했습니다. 실제로 대부분의 기구 구조를 제작했고, 각 모터와 주변 장치도 개별적으로 테스트했습니다.
@@ -61,7 +67,23 @@
 
 다리 구조는 링크 메커니즘을 사용했으며, Servo Neutral Position과 각 관절의 초기 각도를 맞추는 Calibration이 중요했습니다.
 
+<p align="center">
+  <img src="docs/images/servo-calibration.svg" width="650" alt="Servo Neutral Position Calibration Reference">
+  <br>
+  <sub>Version 1에서 사용한 Servo Neutral Position / Linkage Calibration Reference</sub>
+</p>
+
 기구 설계, 내부 배선, 회로 구성도 역시 V1 제작 과정에서 직접 구성하고 수정했습니다.
+
+### Version 1 회로 및 배선
+
+<p align="center">
+  <img src="docs/images/v1-circuit.svg" width="900" alt="Version 1 4족 보행 로봇 회로 및 배선도">
+  <br>
+  <sub>Version 1 회로 및 배선도 — 초기의 기능 중심 구조를 기록하기 위해 보관합니다.</sub>
+</p>
+
+다음 버전에서는 보행에 필요하지 않은 장치를 제거하고 전원 분배와 배선도 더 단순하게 다시 구성할 예정입니다.
 
 ---
 
