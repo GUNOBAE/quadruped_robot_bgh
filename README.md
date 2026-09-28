@@ -4,6 +4,12 @@
 
 > **Project status: Paused / Redesign planned**
 
+<p align="center">
+  <img src="docs/images/v1-prototype.svg" width="760" alt="Version 1 quadruped robot dog prototype">
+  <br>
+  <sub>Version 1 prototype before the locomotion-focused redesign</sub>
+</p>
+
 This repository documents my personal quadruped robot project.
 
 The first prototype was designed as a relatively feature-rich robot dog with four articulated legs, a moving head, ears, tail, displays, camera, speaker, and several sensors. Most of the mechanical structure was built, and individual actuators and peripherals were tested.
@@ -59,7 +65,23 @@ The first version was physically assembled with a large number of additional fea
 
 The leg mechanism used a linkage structure that required careful servo calibration and neutral-position alignment.
 
+<p align="center">
+  <img src="docs/images/servo-calibration.svg" width="650" alt="Servo neutral-position calibration reference">
+  <br>
+  <sub>Servo neutral-position / linkage calibration reference used during Version 1</sub>
+</p>
+
 The mechanical design, wiring, and circuit layout were created and iterated during the first prototype stage.
+
+### Version 1 Wiring
+
+<p align="center">
+  <img src="docs/images/v1-circuit.svg" width="900" alt="Version 1 quadruped robot wiring diagram">
+  <br>
+  <sub>Version 1 wiring diagram — kept as an archive of the original feature-heavy architecture</sub>
+</p>
+
+The next revision will simplify the power distribution and remove non-essential peripherals before locomotion work resumes.
 
 ---
 
