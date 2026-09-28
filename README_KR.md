@@ -5,7 +5,7 @@
 > **프로젝트 상태: 일시 중단 / 경량화 재설계 예정**
 
 <p align="center">
-  <img src="docs/images/v1-prototype.svg" width="760" alt="Version 1 4족 보행 로봇 프로토타입">
+  <img src="docs/images/v1-prototype.webp" width="760" alt="Version 1 4족 보행 로봇 프로토타입">
   <br>
   <sub>보행 중심 재설계 이전의 Version 1 프로토타입</sub>
 </p>
@@ -68,7 +68,7 @@
 다리 구조는 링크 메커니즘을 사용했으며, Servo Neutral Position과 각 관절의 초기 각도를 맞추는 Calibration이 중요했습니다.
 
 <p align="center">
-  <img src="docs/images/servo-calibration.svg" width="650" alt="Servo Neutral Position Calibration Reference">
+  <img src="docs/images/servo-calibration.webp" width="650" alt="Servo Neutral Position Calibration Reference">
   <br>
   <sub>Version 1에서 사용한 Servo Neutral Position / Linkage Calibration Reference</sub>
 </p>
@@ -78,7 +78,7 @@
 ### Version 1 회로 및 배선
 
 <p align="center">
-  <img src="docs/images/v1-circuit.svg" width="900" alt="Version 1 4족 보행 로봇 회로 및 배선도">
+  <img src="docs/images/v1-circuit.webp" width="900" alt="Version 1 4족 보행 로봇 회로 및 배선도">
   <br>
   <sub>Version 1 회로 및 배선도 — 초기의 기능 중심 구조를 기록하기 위해 보관합니다.</sub>
 </p>
