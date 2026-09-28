@@ -5,7 +5,7 @@
 > **Project status: Paused / Redesign planned**
 
 <p align="center">
-  <img src="docs/images/v1-prototype.svg" width="760" alt="Version 1 quadruped robot dog prototype">
+  <img src="docs/images/v1-prototype.webp" width="760" alt="Version 1 quadruped robot dog prototype">
   <br>
   <sub>Version 1 prototype before the locomotion-focused redesign</sub>
 </p>
@@ -66,7 +66,7 @@ The first version was physically assembled with a large number of additional fea
 The leg mechanism used a linkage structure that required careful servo calibration and neutral-position alignment.
 
 <p align="center">
-  <img src="docs/images/servo-calibration.svg" width="650" alt="Servo neutral-position calibration reference">
+  <img src="docs/images/servo-calibration.webp" width="650" alt="Servo neutral-position calibration reference">
   <br>
   <sub>Servo neutral-position / linkage calibration reference used during Version 1</sub>
 </p>
@@ -76,7 +76,7 @@ The mechanical design, wiring, and circuit layout were created and iterated duri
 ### Version 1 Wiring
 
 <p align="center">
-  <img src="docs/images/v1-circuit.svg" width="900" alt="Version 1 quadruped robot wiring diagram">
+  <img src="docs/images/v1-circuit.webp" width="900" alt="Version 1 quadruped robot wiring diagram">
   <br>
   <sub>Version 1 wiring diagram — kept as an archive of the original feature-heavy architecture</sub>
 </p>
