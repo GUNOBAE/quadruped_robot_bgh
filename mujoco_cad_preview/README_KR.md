@@ -156,3 +156,25 @@ NEW_PC_START.cmd를 다시 실행하면 됩니다.
 
 계속 실패하면 max-fit-error 값을 무작정 높이지 마세요.
 **output/cad_fit_report.json 파일 전체**를 보내주면 정확한 부품별 원인을 진단할 수 있습니다.
+
+## 8. 2026-11-09 실제 STL 37개 비교로 확인한 근본 원인
+
+이전 24/37 변환 실패는 실제 STL 형상이 축소된 문제가 아니었습니다.
+Fusion의 회전된 Occurrence.boundingBox는 로컬 부품의 Axis-Aligned Bounding Box
+(로컬 경계 상자) 여덟 꼭짓점을 조립 좌표계로 회전시킨 뒤 생성한
+**보수적인 경계 상자**일 수 있습니다. 따라서 STL의 실제 삼각형 꼭짓점들로
+계산한 타이트한 경계 상자보다 크게 나옵니다.
+
+사용자 제공 `Quadruped_CAD_Meshes.zip` 원본 37개 STL을 다시 계산하여 확인:
+- 기존 계산법: 13개 형상을 잘못 거절 (24/37)
+- 수정 계산법: 로컬 AABB 모서리 8개를 회전시켜 Fusion 경계와 비교 → **37/37 통과**
+- 최대 정규화 오차: 약 0.0109 (tibia_R v1 (1):1)
+- **메쉬 중심 이동·변형·추가 회전 없이도 일치**하므로 보정은 필요하지 않습니다.
+
+새 `attach_cad_meshes.py`는 **실제 부품 형상을 이동·변형하지 않고** 두 방식의
+경계 상자(삼각형 직접 / 로컬 AABB 꼭짓점 회전) 중 적합한 것을 선택합니다.
+`output/cad_fit_report.json`에는 `bounds_method`, `tight_bbox_error_ratio`,
+`conservative_bbox_error_ratio`, `outside_fusion_bbox_cm`를 기록합니다.
+
+현재 37/37 결과는 STL 좌표 정합 검사의 통과를 뜻합니다.
+전체 MuJoCo CAD 렌더러 실행 및 보행 물리 학습 완료를 의미하지 않습니다.
