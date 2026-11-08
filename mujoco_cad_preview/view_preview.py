@@ -14,6 +14,7 @@ from pathlib import Path
 from xml.etree import ElementTree as ET
 
 import mujoco
+import mujoco.viewer
 import numpy as np
 
 ROOT = Path(__file__).resolve().parent
@@ -87,7 +88,6 @@ def main():
     print(json.dumps(report, indent=2))
     if args.verify_only:
         return
-    import mujoco.viewer
     print("STICK/LINKAGE PREVIEW ONLY. No real CAD meshes or walking.")
     with mujoco.viewer.launch_passive(model, data) as viewer:
         viewer.cam.lookat[:] = [0.0, 0.015, -0.02]
