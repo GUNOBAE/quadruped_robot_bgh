@@ -14,6 +14,7 @@ from pathlib import Path
 from xml.etree import ElementTree as ET
 
 import mujoco
+import mujoco.viewer
 import numpy as np
 
 ROOT = Path(__file__).resolve().parent
@@ -89,7 +90,6 @@ def main():
     if args.verify_only:
         return
 
-    import mujoco.viewer
     with mujoco.viewer.launch_passive(model, data) as viewer:
         viewer.cam.lookat[:] = [0.0, 0.0, 0.0]
         viewer.cam.distance = 0.65
