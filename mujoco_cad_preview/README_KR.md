@@ -137,3 +137,22 @@ Git이 설치되어 있다면 PowerShell에서:
 
 **GitHub PR #1은 아직 Draft**입니다. 코드가 새 PC에서 실행되는지
 실기 검증한 뒤에만 병합을 검토하세요.
+
+## 7. CAD mesh bounds mismatch (2026-11-09 수정)
+
+NEW_PC_START.cmd에서 MuJoCo 97프레임 검사에 성공한 후
+Only 24/37 meshes passed validation 오류가 발생할 수 있습니다.
+이는 **MuJoCo 보행 모델의 오류가 아니라 Fusion STL 위치와 bounding box 대조 오류**입니다.
+
+수정된 attach_cad_meshes.py는 다음과 같이 보수적으로 대응합니다.
+- STL 가로·세로·높이가 Fusion bounds_cm과 일치하는 경우만 중심점 위치 차이를 평행이동으로 보정.
+- 원래 삼각형을 늘리거나 회전하거나 관절 값을 바꾸지 않음.
+- 형상 자체가 다르거나 이동이 3cm를 초과하면 변환 중단.
+- output/cad_fit_report.json에 alignment_method, extent_error_ratio, center_correction_cm, diagnostic_candidates, recentered_parts 기록.
+- **평행이동으로 재배치된 부품은 Fusion 원본과 시각적으로 반드시 비교해야 합니다.**
+
+기존 Python 환경을 삭제할 필요 없이 GitHub 최신 attach_cad_meshes.py만 덮어쓰고
+NEW_PC_START.cmd를 다시 실행하면 됩니다.
+
+계속 실패하면 max-fit-error 값을 무작정 높이지 마세요.
+**output/cad_fit_report.json 파일 전체**를 보내주면 정확한 부품별 원인을 진단할 수 있습니다.
