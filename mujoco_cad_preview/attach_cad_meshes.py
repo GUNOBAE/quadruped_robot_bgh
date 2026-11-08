@@ -74,12 +74,15 @@ def write_stl(tris: np.ndarray) -> bytes:
 
 def fit_frame(triangles: np.ndarray, bbox: dict, transform: list,
               max_fit_error: float = 0.08):
-    """Identify STL unit/frame using full bounds, then optionally fix pure origin drift.
+    """Compare Fusion's potentially conservative AABB correctly.
 
-    The exporter can produce a mesh with a displaced local origin.
-    A center translation is allowed ONLY when its three-dimensional extents
-    already match the CAD bounding box. Never rotate, stretch or scale an
-    individual axis to force an arbitrary match.
+    Fusion's Occurrence.boundingBox can be the world AABB of the
+    8 transformed corners of the component's *local bounding box*.
+    The AABB of transformed STL vertices is often smaller for
+    diagonally oriented parts, even when the geometry is correct.
+
+    Compare both types; do not resize, rotate, or translate any STL
+    to artificially satisfy the check.
     """
     points = triangles.reshape(-1, 3)
     lo = np.asarray(bbox["min"], dtype=np.float64)
@@ -89,77 +92,80 @@ def fit_frame(triangles: np.ndarray, bbox: dict, transform: list,
     mat = np.asarray(transform, dtype=np.float64).reshape(4, 4)
     rotation = mat[:3, :3]
     translation = mat[:3, 3]
-    size = hi - lo
-    center = (lo + hi) / 2
-    denom = max(float(np.linalg.norm(size)), 2.0)
+    denom = max(float(np.linalg.norm(hi - lo)), 2.0)
     candidates = []
     for unit, factor in (("mm", 0.1), ("cm", 1.0), ("m", 100.0), ("inch", 2.54)):
-        local_cm = points * factor
+        local = points * factor
+        local_min = local.min(axis=0)
+        local_max = local.max(axis=0)
+        corners = np.array([
+            (x, y, z)
+            for x in (local_min[0], local_max[0])
+            for y in (local_min[1], local_max[1])
+            for z in (local_min[2], local_max[2])
+        ], dtype=np.float64)
         for frame in ("assembly", "component"):
-            world_cm = (
-                local_cm if frame == "assembly"
-                else local_cm @ rotation.T + translation
+            if frame == "assembly":
+                world_vertices = local
+                world_corners = corners
+            else:
+                world_vertices = local @ rotation.T + translation
+                world_corners = corners @ rotation.T + translation
+
+            tight_min = world_vertices.min(axis=0)
+            tight_max = world_vertices.max(axis=0)
+            conservative_min = world_corners.min(axis=0)
+            conservative_max = world_corners.max(axis=0)
+            def score(low, high):
+                return float(np.linalg.norm(
+                    np.concatenate((low - lo, high - hi))
+                ) / denom)
+
+            tight_score = score(tight_min, tight_max)
+            conservative_score = score(conservative_min, conservative_max)
+            selected = ("transformed_local_bbox"
+                        if conservative_score < tight_score
+                        else "world_vertex_bbox")
+            score_value = min(conservative_score, tight_score)
+            # The tight geometry must lie inside the Fusion AABB.
+            # Allow a tiny tolerance for tessellation / floating precision.
+            outside_cm = float(max(
+                np.max(lo - tight_min),
+                np.max(tight_max - hi),
+                0.0
+            ))
+            candidates.append({
+                "error_ratio": score_value,
+                "tight_bbox_error_ratio": tight_score,
+                "conservative_bbox_error_ratio": conservative_score,
+                "bounds_method": selected,
+                "stl_units": unit,
+                "scale_to_cm": factor,
+                "source_frame": frame,
+                "outside_fusion_bbox_cm": outside_cm,
+                "predicted_bbox_cm": {
+                    "min": (conservative_min if selected == "transformed_local_bbox"
+                            else tight_min).tolist(),
+                    "max": (conservative_max if selected == "transformed_local_bbox"
+                            else tight_max).tolist(),
+                },
+            })
+    candidates.sort(key=lambda c: (
+        c["error_ratio"], c["outside_fusion_bbox_cm"]
+    ))
+    chosen = dict(candidates[0])
+    if chosen["outside_fusion_bbox_cm"] > 0.03:
+        raise ValueError(
+            "STL vertices lie outside Fusion bounding box by {:.4g} cm".format(
+                chosen["outside_fusion_bbox_cm"]
             )
-            low = world_cm.min(axis=0)
-            high = world_cm.max(axis=0)
-            shift = center - (low + high) / 2
-            uncorrected_error = float(np.linalg.norm(
-                np.concatenate((low - lo, high - hi))
-            ) / denom)
-            # Error left after translating centers (shape/size difference).
-            corrected_error = float(np.linalg.norm(
-                np.concatenate((low + shift - lo, high + shift - hi))
-            ) / denom)
-            extent_error = float(np.linalg.norm((high - low) - size) / denom)
-            candidates.append(dict(
-                error_ratio=uncorrected_error,
-                shape_error_ratio=corrected_error,
-                extent_error_ratio=extent_error,
-                stl_units=unit, scale_to_cm=factor, source_frame=frame,
-                center_correction_cm=shift.tolist(),
-                center_correction_length_cm=float(np.linalg.norm(shift)),
-                predicted_bbox_cm={"min": low.tolist(), "max": high.tolist()},
-                expected_bbox_cm={"min": lo.tolist(), "max": hi.tolist()},
-            ))
-    raw = min(candidates, key=lambda c: c["error_ratio"])
-    if raw["error_ratio"] <= max_fit_error:
-        chosen = dict(raw)
-        chosen["center_correction_cm"] = [0.0, 0.0, 0.0]
-        chosen["alignment_method"] = "direct"
-        chosen["review_required"] = False
-    else:
-        # No blind threshold bump: require matching extents, and only fix
-        # center displacement smaller than 3 cm and half the part diagonal.
-        eligible = [
-            c for c in candidates
-            if c["shape_error_ratio"] <= min(0.05, max_fit_error)
-            and c["extent_error_ratio"] <= 0.07071
-            and c["center_correction_length_cm"] <= min(3.0, denom * 0.5)
-        ]
-        if eligible:
-            chosen = dict(min(
-                eligible,
-                key=lambda c: (
-                    c["shape_error_ratio"],
-                    c["center_correction_length_cm"],
-                ),
-            ))
-            chosen["alignment_method"] = "center_translation_only"
-            chosen["review_required"] = True
-            chosen["error_ratio"] = chosen["shape_error_ratio"]
-        else:
-            chosen = dict(raw)
-            chosen["alignment_method"] = "rejected_shape_or_frame_mismatch"
-            chosen["review_required"] = True
-    chosen["initial_error_ratio"] = raw["error_ratio"]
-    chosen["diagnostic_candidates"] = [
-        {k: v for k, v in cand.items() if k not in (
-            "predicted_bbox_cm", "expected_bbox_cm",
-        )}
-        for cand in sorted(
-            candidates, key=lambda c: c["shape_error_ratio"]
-        )[:4]
-    ]
+        )
+    chosen["alignment_method"] = chosen["bounds_method"]
+    chosen["review_required"] = bool(chosen["error_ratio"] > max_fit_error)
+    chosen["center_correction_cm"] = [0.0, 0.0, 0.0]
+    chosen["diagnostic_candidates"] = [{
+        k: v for k, v in item.items() if k != "predicted_bbox_cm"
+    } for item in candidates[:4]]
     return chosen
 
 
@@ -292,8 +298,8 @@ def main():
                 else:
                     mat = np.asarray(row["transform_cm"]).reshape(4, 4)
                     world_cm = tris * scale @ mat[:3, :3].T + mat[:3, 3]
-                # Pure origin drift correction. No mesh distortion or rotation.
-                world_cm = world_cm + np.asarray(fit["center_correction_cm"])
+                # Keep CAD geometry exactly as exported (no scaling beyond units,
+                # no recentering, and no distortion).
                 body_id = component_to_body[name]
                 if body_id not in bodies:
                     raise ValueError("Unknown target body: " + body_id)
