@@ -72,12 +72,14 @@ def write_stl(tris: np.ndarray) -> bytes:
     )
 
 
-def fit_frame(triangles: np.ndarray, bbox: dict, transform: list):
-    """Identify units (mm/cm/m/inch) and assembly-vs-component frame.
+def fit_frame(triangles: np.ndarray, bbox: dict, transform: list,
+              max_fit_error: float = 0.08):
+    """Identify STL unit/frame using full bounds, then optionally fix pure origin drift.
 
-    Compare full 3D min/max bounds against Fusion's exported bounding box.
-    If no candidate matches, FAIL rather than silently guessing.
-    Fusion internal geometry units are centimetres.
+    The exporter can produce a mesh with a displaced local origin.
+    A center translation is allowed ONLY when its three-dimensional extents
+    already match the CAD bounding box. Never rotate, stretch or scale an
+    individual axis to force an arbitrary match.
     """
     points = triangles.reshape(-1, 3)
     lo = np.asarray(bbox["min"], dtype=np.float64)
@@ -87,10 +89,12 @@ def fit_frame(triangles: np.ndarray, bbox: dict, transform: list):
     mat = np.asarray(transform, dtype=np.float64).reshape(4, 4)
     rotation = mat[:3, :3]
     translation = mat[:3, 3]
-    denom = max(float(np.linalg.norm(hi - lo)), 2.0)
+    size = hi - lo
+    center = (lo + hi) / 2
+    denom = max(float(np.linalg.norm(size)), 2.0)
     candidates = []
-    for unit, scale in (("mm", 0.1), ("cm", 1.0), ("m", 100.0), ("inch", 2.54)):
-        local_cm = points * scale
+    for unit, factor in (("mm", 0.1), ("cm", 1.0), ("m", 100.0), ("inch", 2.54)):
+        local_cm = points * factor
         for frame in ("assembly", "component"):
             world_cm = (
                 local_cm if frame == "assembly"
@@ -98,19 +102,65 @@ def fit_frame(triangles: np.ndarray, bbox: dict, transform: list):
             )
             low = world_cm.min(axis=0)
             high = world_cm.max(axis=0)
-            error = float(np.linalg.norm(
+            shift = center - (low + high) / 2
+            uncorrected_error = float(np.linalg.norm(
                 np.concatenate((low - lo, high - hi))
             ) / denom)
-            candidates.append((error, unit, scale, frame))
-    candidates.sort()
-    error, unit, scale, frame = candidates[0]
-    return {
-        "error_ratio": error,
-        "stl_units": unit,
-        "scale_to_cm": scale,
-        "source_frame": frame,
-        "runner_up_score": candidates[1][0],
-    }
+            # Error left after translating centers (shape/size difference).
+            corrected_error = float(np.linalg.norm(
+                np.concatenate((low + shift - lo, high + shift - hi))
+            ) / denom)
+            extent_error = float(np.linalg.norm((high - low) - size) / denom)
+            candidates.append(dict(
+                error_ratio=uncorrected_error,
+                shape_error_ratio=corrected_error,
+                extent_error_ratio=extent_error,
+                stl_units=unit, scale_to_cm=factor, source_frame=frame,
+                center_correction_cm=shift.tolist(),
+                center_correction_length_cm=float(np.linalg.norm(shift)),
+                predicted_bbox_cm={"min": low.tolist(), "max": high.tolist()},
+                expected_bbox_cm={"min": lo.tolist(), "max": hi.tolist()},
+            ))
+    raw = min(candidates, key=lambda c: c["error_ratio"])
+    if raw["error_ratio"] <= max_fit_error:
+        chosen = dict(raw)
+        chosen["center_correction_cm"] = [0.0, 0.0, 0.0]
+        chosen["alignment_method"] = "direct"
+        chosen["review_required"] = False
+    else:
+        # No blind threshold bump: require matching extents, and only fix
+        # center displacement smaller than 3 cm and half the part diagonal.
+        eligible = [
+            c for c in candidates
+            if c["shape_error_ratio"] <= min(0.05, max_fit_error)
+            and c["extent_error_ratio"] <= 0.07071
+            and c["center_correction_length_cm"] <= min(3.0, denom * 0.5)
+        ]
+        if eligible:
+            chosen = dict(min(
+                eligible,
+                key=lambda c: (
+                    c["shape_error_ratio"],
+                    c["center_correction_length_cm"],
+                ),
+            ))
+            chosen["alignment_method"] = "center_translation_only"
+            chosen["review_required"] = True
+            chosen["error_ratio"] = chosen["shape_error_ratio"]
+        else:
+            chosen = dict(raw)
+            chosen["alignment_method"] = "rejected_shape_or_frame_mismatch"
+            chosen["review_required"] = True
+    chosen["initial_error_ratio"] = raw["error_ratio"]
+    chosen["diagnostic_candidates"] = [
+        {k: v for k, v in cand.items() if k not in (
+            "predicted_bbox_cm", "expected_bbox_cm",
+        )}
+        for cand in sorted(
+            candidates, key=lambda c: c["shape_error_ratio"]
+        )[:4]
+    ]
+    return chosen
 
 
 def read_body_positions(xml_root: ET.Element):
@@ -227,7 +277,7 @@ def main():
             try:
                 tris = read_stl(archive.read(file))
                 fit = fit_frame(
-                    tris, row["bounds_cm"], row["transform_cm"]
+                    tris, row["bounds_cm"], row["transform_cm"], args.max_fit_error
                 )
                 entry.update(fit)
                 entry["triangles"] = int(len(tris))
@@ -242,6 +292,8 @@ def main():
                 else:
                     mat = np.asarray(row["transform_cm"]).reshape(4, 4)
                     world_cm = tris * scale @ mat[:3, :3].T + mat[:3, 3]
+                # Pure origin drift correction. No mesh distortion or rotation.
+                world_cm = world_cm + np.asarray(fit["center_correction_cm"])
                 body_id = component_to_body[name]
                 if body_id not in bodies:
                     raise ValueError("Unknown target body: " + body_id)
@@ -260,7 +312,8 @@ def main():
         "converted": len(converted),
         "errors": errors,
         "parts": reports,
-        "warning": "Visual-only kinematic preview. Not a gravity/contact/RL model.",
+        "recentered_parts": [p["occurrence"] for p in reports if p.get("alignment_method") == "center_translation_only"],
+        "warning": "Visual-only kinematic preview. Not a gravity/contact/RL model. All center-corrected parts require visual comparison against Fusion.",
     }
     report_path = output / "cad_fit_report.json"
     report_path.write_text(
@@ -320,6 +373,8 @@ def main():
     final_xml = output / "cad_preview.xml"
     xml_tree.write(final_xml, encoding="utf-8", xml_declaration=True)
     print("SUCCESS: 37 Fusion CAD parts attached.")
+    if report["recentered_parts"]:
+        print("ATTENTION: {} parts were recentered without rotation or stretching; check against Fusion CAD.".format(len(report["recentered_parts"])))
     print("MuJoCo XML:", final_xml)
     print("Fit report:", report_path)
     print("NOTE: This is NOT a physics-validated walking model.")
