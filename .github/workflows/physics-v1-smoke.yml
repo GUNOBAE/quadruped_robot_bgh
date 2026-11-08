@@ -1,0 +1,59 @@
+name: Quadruped Physics V1 Smoke Test
+on:
+  push:
+    branches:
+      - feature/mujoco-physics-v1
+  workflow_dispatch:
+
+jobs:
+  physics-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    defaults:
+      run:
+        working-directory: mujoco_cad_preview
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: mujoco_cad_preview/requirements_new_pc.txt
+      - name: Install MuJoCo / SciPy / NumPy
+        run: python -m pip install -r requirements_new_pc.txt
+      - name: Rebuild 36-joint reference, 8 loops and 97 pose frames
+        run: |
+          python make_seed.py
+          python build_preview.py audit_excerpt_reference.json --out output
+          python solve_motion.py
+          python view_preview.py --verify-only
+      - name: Compile Physics V1 schematic model (private CAD files not needed)
+        run: python build_physics_v1.py --schematic
+      - name: Step free body under gravity for 1 second
+        run: python run_physics_v1.py --seconds 1
+      - name: Inspect exact structural expectations
+        run: |
+          python - <<'PY'
+          import json
+          import xml.etree.ElementTree as ET
+          root = ET.parse('output/physics_v1.xml').getroot()
+          report=json.load(open('output/physics_v1_report.json'))
+          assert len(root.findall('./worldbody/body/freejoint'))==1
+          assert len(root.findall('.//inertial'))==29
+          assert len(root.findall('.//geom[@name="torso_collision"]'))==1
+          assert len([g for g in root.findall('.//geom') if g.get('name','').startswith('foot_collision_')])==4
+          assert len(root.findall('./equality/connect'))==16
+          assert len(root.findall('./actuator/position'))==12
+          assert len(root.findall('./sensor/*'))==3
+          assert report['model_nq']==35 and report['model_nv']==34 and report['actuators']==12
+          assert report['physics_stepping'] is True
+          print('Physics smoke test passed. NOT an actual CAD/standing/RL validation.')
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: physics-v1-smoke-output
+          path: |
+            mujoco_cad_preview/output/physics_v1_config.json
+            mujoco_cad_preview/output/physics_v1_report.json
+            mujoco_cad_preview/output/kinematic_validation.json
