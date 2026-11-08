@@ -1,0 +1,7 @@
+.venv/
+__pycache__/
+*.pyc
+output/
+Quadruped_CAD_Meshes.zip
+audit_excerpt_reference.json
+quadruped_joint_audit.json
