@@ -1,0 +1,73 @@
+name: Quadruped Directional PPO RL V0 Smoke
+
+on:
+  push:
+    branches:
+      - feature/mujoco-directional-rl-v0
+  workflow_dispatch:
+
+jobs:
+  rl-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    defaults:
+      run:
+        working-directory: mujoco_cad_preview
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install CPU PyTorch, MuJoCo and RL dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
+          python -m pip install -r requirements_new_pc.txt
+          python -m pip install -r requirements_rl.txt
+      - name: Regenerate 36 joints and 8 closed loops (schematic)
+        run: |
+          python make_seed.py
+          python build_preview.py audit_excerpt_reference.json --out output
+          python solve_motion.py
+          python view_preview.py --verify-only
+      - name: Build 4-toe free-base soft-contact physics
+        run: |
+          python build_physics_v1.py --schematic
+          python build_rl_model.py
+      - name: Check Gym API, six commands, contacts and PPO train loop
+        run: |
+          python check_rl.py
+          python train_rl.py --stage stand --steps 64 --smoke --save output/rl_runs/smoke_sim_ppo.zip
+          python evaluate_rl.py --policy output/rl_runs/smoke_sim_ppo.zip --direction forward --seconds .5
+          python compare_to_zero.py --policy output/rl_runs/smoke_sim_ppo.zip --direction forward --seconds .5
+      - name: Assert generated PPO training artifacts
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          import xml.etree.ElementTree as ET
+          root=ET.parse('output/physics_rl_v0.xml').getroot()
+          assert len(root.findall('./worldbody/body/freejoint')) == 1
+          assert len([e for e in root.findall('.//geom') if e.get('name','').startswith('foot_collision_')]) == 4
+          assert len(root.findall('./actuator/position')) == 12
+          assert len(root.findall('./equality/connect')) == 16
+          assert Path('output/rl_runs/smoke_sim_ppo.zip').is_file()
+          assert json.load(open('output/rl_v0_preflight.json'))['gym_check_env_passed']
+          results=json.load(open('output/rl_runs/direction_evaluation.json'))['results']
+          assert len(results) == 1 and results[0]['direction']=='forward'
+          comparison=json.load(open('output/rl_runs/zero_vs_ppo_smoke_sim_ppo_forward.json'))['comparison'][0]
+          assert comparison['direction']=='forward'
+          assert comparison['zero_action_baseline']['reward_components_total']
+          assert comparison['trained_policy']['reward_components_total']
+          assert Path('output/rl_runs/direction_evaluation_smoke_sim_ppo_forward.json').is_file()
+          print('RL V0 smoke passed with reward breakdown and zero-action baseline. SIMULATION ONLY.')
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: directional-rl-smoke-diagnostics
+          path: |
+            mujoco_cad_preview/output/rl_v0_preflight.json
+            mujoco_cad_preview/output/rl_v0_contact_config.json
+            mujoco_cad_preview/output/rl_runs/direction_evaluation.json
+            mujoco_cad_preview/output/kinematic_validation.json
