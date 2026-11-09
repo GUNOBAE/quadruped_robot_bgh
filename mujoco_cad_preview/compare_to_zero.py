@@ -53,6 +53,10 @@ def trial(policy, direction, seconds, seed, mode):
         avg = np.mean([i["velocity_achieved"] for _, i in results], axis=0)
         cmd = np.asarray(DIRECTIONS[direction])
         last = results[-1][1]
+        reward_parts = {}
+        for _, item in results:
+            for key, value in item.get("reward_components", {}).items():
+                reward_parts[key] = reward_parts.get(key, 0.) + float(value)
         return {
             "duration_s": len(results) * env.dt,
             "target_velocity_forward_left_yaw": cmd.tolist(),
@@ -64,6 +68,10 @@ def trial(policy, direction, seconds, seed, mode):
                 "yaw_rad": float(angle_diff(env._yaw(R), start_yaw)),
             },
             "total_reward": float(sum(r for r, _ in results)),
+            "reward_components_total": reward_parts,
+            "reward_components_per_step": {
+                key: val / len(results) for key, val in reward_parts.items()
+            },
             "initial_base_height_m": initial_height,
             "initial_foot_contacts": initial_contact,
             "end_base_height_m": float(last["body_height_m"]),
