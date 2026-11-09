@@ -349,6 +349,18 @@ class BGHCommandEnv(gym.Env):
             "tracking_reward": float(velocity_tracking),
             "yaw_reward": float(yaw_tracking),
             "contact_slip_proxy": slip,
+            # Telemetry only: exactly the signed reward contributions.
+            # This does NOT change the reward, the observation or the actions.
+            "reward_components": {
+                "velocity_tracking": float(2.0 * velocity_tracking),
+                "yaw_tracking": float(.7 * yaw_tracking),
+                "upright": float(.45 * upright),
+                "body_height": float(.2 * height_score),
+                "action_smoothness_penalty": float(-.015 * smooth),
+                "actuator_work_penalty": float(-.008 * work),
+                "foot_slip_penalty": float(-.025 * slip),
+                "fall_penalty": float(-5. if fallen else 0.),
+            },
             "provisional_servo_mapping": True,
         }
         return obs, float(reward), bool(fallen), bool(truncated), info
