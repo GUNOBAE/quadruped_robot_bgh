@@ -20,6 +20,12 @@ from rl_env import BGHCommandEnv, DIRECTIONS, angle_diff, ROOT
 
 def run_direction(policy: PPO, direction: str, obs_mode: str,
                   seconds: float, view: bool, seed: int):
+    """Evaluate FIRST episode, then continuously replay it in GUI.
+
+    The evaluation statistics refer ONLY to the first episode.
+    Repeated viewer episodes are for visual inspection and are not
+    included in the quantitative result. Close the viewer to finish.
+    """
     env = BGHCommandEnv(
         stage="all", obs_mode=obs_mode, max_seconds=seconds,
         randomize_contact=False, command=direction
@@ -31,36 +37,32 @@ def run_direction(policy: PPO, direction: str, obs_mode: str,
     measures = []
     total_reward = 0.
     fell = False
-    def rollout(viewer=None):
+
+    def rollout(viewer=None, record=True):
         nonlocal obs, total_reward, fell
         for _ in range(env.max_steps):
+            if viewer is not None and not viewer.is_running():
+                break
             action, _ = policy.predict(obs, deterministic=True)
             if viewer is not None:
                 with viewer.lock():
                     obs, reward, term, trunc, info = env.step(action)
             else:
                 obs, reward, term, trunc, info = env.step(action)
-            measures.append(info)
-            total_reward += reward
+            if record:
+                measures.append(info)
+                total_reward += reward
             if viewer is not None:
                 viewer.sync()
                 if not viewer.is_running():
                     break
                 time.sleep(max(0., env.dt * .5))
             if term or trunc:
-                fell = bool(info["fall"])
+                if record:
+                    fell = bool(info["fall"])
                 break
 
-    try:
-        if view:
-            with mujoco.viewer.launch_passive(env.model, env.data) as viewer:
-                viewer.cam.distance = .7
-                viewer.cam.azimuth = 125
-                viewer.cam.elevation = -18
-                viewer.cam.lookat[:] = [0., 0., .08]
-                rollout(viewer)
-        else:
-            rollout()
+    def first_episode_result():
         delta_local = R0.T @ (env.data.xpos[env.base_id] - origin)
         measured_seconds = env.elapsed_steps * env.dt
         avg = np.mean([m["velocity_achieved"] for m in measures], axis=0) \
@@ -95,6 +97,41 @@ def run_direction(policy: PPO, direction: str, obs_mode: str,
             "preliminary_direction_tracking_candidate": candidate,
             "simulation_only": True,
         }
+
+    try:
+        if view:
+            with mujoco.viewer.launch_passive(env.model, env.data) as viewer:
+                viewer.cam.distance = .7
+                viewer.cam.azimuth = 125
+                viewer.cam.elevation = -18
+                viewer.cam.lookat[:] = [0., 0., .08]
+                rollout(viewer, record=True)
+                # Freeze the FIRST episode's evaluation statistics before
+                # resetting the simulation for subsequent visual replays.
+                result = first_episode_result()
+                print(
+                    "FIRST EPISODE:", direction,
+                    "seconds:", result["simulated_seconds"],
+                    "fell:", result["fell"],
+                    "distance:", result["displacement"],
+                )
+                print(
+                    "MuJoCo viewer: replaying each episode until you CLOSE the window."
+                )
+                repeats = 0
+                while viewer.is_running():
+                    repeats += 1
+                    with viewer.lock():
+                        obs, _ = env.reset(seed=seed)
+                    viewer.sync()
+                    if not viewer.is_running():
+                        break
+                    rollout(viewer, record=False)
+                print("Viewer closed. Replayed", repeats, "additional episode(s).")
+                return result
+        else:
+            rollout()
+            return first_episode_result()
     finally:
         env.close()
 
@@ -148,10 +185,17 @@ def main():
         "results": results,
     }
     path = ROOT / "output" / "rl_runs" / "direction_evaluation.json"
+    # Keep a separate record per policy and commanded direction.
+    # Otherwise evaluating 'stand/stop' silently overwrites 'all/all'.
+    per_run = path.with_name(
+        "direction_evaluation_" + a.policy.stem + "_" + a.direction + ".json"
+    )
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(report, ensure_ascii=False, indent=2),
-                    encoding="utf-8")
-    print("DIRECTION REPORT:", path)
+    serialized = json.dumps(report, ensure_ascii=False, indent=2)
+    path.write_text(serialized, encoding="utf-8")
+    per_run.write_text(serialized, encoding="utf-8")
+    print("DIRECTION REPORT (latest):", path)
+    print("DIRECTION REPORT (preserved):", per_run)
     print("A policy ZIP is not proof of successful walking; inspect measured velocity and falls.")
 
 
