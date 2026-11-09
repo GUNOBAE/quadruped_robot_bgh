@@ -132,3 +132,77 @@ PCA9685만으로는 실제 관절 위치와 속도 데이터를 읽지 못한다
 - output/physics_v1_report.json
 - output/rl_v0_preflight.json
 - output/rl_runs/direction_evaluation.json
+
+## 8. 실기 결과 해석 — PPO 종료, 보행 0/6 (2026-11-10)
+
+사용자 PC에서 약 261,120 환경 결정까지 PPO를 실행했고
+전체 방향 평가 결과는 다음과 같았습니다 (6초 측정):
+
+| 명령 | 목표 | 실제 이동/회전 | 판정 |
+| --- | --- | --- | --- |
+| forward | 45cm | 6.28cm | 실패 |
+| backward | -45cm | -2.36cm | 실패 |
+| left | 39cm | 0.43cm | 실패 |
+| right | -39cm | -2.90cm | 실패 |
+| turn_left | +2.70rad | -0.075rad | 실패 |
+| turn_right | -2.70rad | -0.011rad | 실패 |
+
+서기 정책을 stop 방향으로 평가하면 낙상 없이 거의 제자리에 있는
+후보 수준이지만, **여섯 방향 모두 정상적인 보행 속도 추종을 못 합니다.**
+평균 에피소드 길이가 400에 가까운 것은 8초 동안 버틴다는 의미일 뿐
+걷기를 배웠다는 증거가 아닙니다.
+
+### 8.1 흔들리다가 MuJoCo 창이 종료되는 현상
+
+이전 evaluate_rl.py는 8초 에피소드가 끝나면 viewer context를 끝내면서
+창을 자동으로 닫도록 작성되어 있었습니다. Python 에러가 아니었습니다.
+현재 수정본은 `--view` 실행 중 에피소드가 끝나면 **같은 초기 조건으로
+자동 재시작하여 사용자 스스로 창을 닫을 때까지 반복 재생**합니다.
+숫자 리포트에는 첫 에피소드만 포함되어 비교 가능성을 유지합니다.
+
+### 8.2 왜 보상이 올라가도 걷지 않는가?
+
+기존 reward의 일부 항목은 제자리 자세를 유지하는 행동만으로도
+높은 값을 줄 수 있습니다. 예를 들어 turn_left 명령의 이동 목표속도는
+0이므로 정지 상태에서도 이동속도 추종 항목에서 **+2.0**을 받습니다.
+회전속도 항목 가중치는 **0.7**이라 실제 회전보다 서서 버티는 행동이
+점수 측면에서 유리할 수 있습니다. 이것만이 유일한 원인이라고 단정할
+수는 없으며, 실제 12개 구동 관절과 가동폭/토크 제한도 검증해야 합니다.
+
+### 8.3 학습 정책 vs 아무 명령도 하지 않는 기준 로봇 비교
+
+새 compare_to_zero.py는 **같은 초기 상태, 같은 지면, 같은 명령**에서
+AI 행동과 action=0을 비교합니다. PPO 정책이나 원본 CAD를 수정하지 않습니다.
+
+기존 Windows 작업 폴더에서 최신 GitHub 스크립트 3개:
+
+    cd C:\quadruped_robot_bgh-feature-mujoco-cad-preview\mujoco_cad_preview
+    $base = 'https://raw.githubusercontent.com/GUNOBAE/quadruped_robot_bgh/feature/mujoco-directional-rl-v0/mujoco_cad_preview'
+    @('evaluate_rl.py','rl_env.py','compare_to_zero.py') | ForEach-Object {
+        Invoke-WebRequest "$base/$_" -OutFile $_
+    }
+
+기준 모델과 전체방향 PPO의 차이를 분석:
+
+    .\.venv\Scripts\python.exe compare_to_zero.py --policy output\rl_runs\all_sim_ppo.zip --seconds 6
+
+결과는 output/rl_runs/zero_vs_ppo_all_sim_ppo_all.json에 저장됩니다.
+목표 방향 속도오차, 관절 명령 변동, 바닥 접촉, 낙상과 함께
+**보상 항목별 합계와 단계별 평균값**을 기록합니다.
+이 비교에서 PPO가 아무것도 하지 않는 정책보다 낫지 않다면
+무작정 학습 횟수를 늘리기 전에 환경/관절/보상 설계를 재검토합니다.
+
+전진 8초 에피소드를 계속 반복해서 화면에서 보기:
+
+    .\.venv\Scripts\python.exe evaluate_rl.py --policy output\rl_runs\all_sim_ppo.zip --direction forward --seconds 8 --view
+
+이제 창은 자동으로 닫히지 않으므로 **MuJoCo X 버튼**으로 직접 종료하세요.
+평가 JSON은 각각 direction_evaluation_all_sim_ppo_forward.json 같은 별도 이름으로
+보존되며, 기존 direction_evaluation.json은 마지막 평가로 갱신됩니다.
+
+### 8.4 아직 하지 말아야 할 것
+
+보상 계수나 서보 힘을 임의로 크게 변경하고 즉시 재학습하지 마세요.
+먼저 실제 구동 관절 매핑/관절 출력축/회전 방향/발 접촉 위치/서보 토크를
+확인하고, 물리 조건을 고정한 대조군 실험으로 문제가 어디에 있는지
+판별하는 것이 우선입니다.
