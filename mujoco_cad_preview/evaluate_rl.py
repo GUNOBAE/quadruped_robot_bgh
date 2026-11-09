@@ -39,8 +39,7 @@ def run_direction(policy: PPO, direction: str, obs_mode: str,
             measures.append(info)
             total_reward += reward
             if viewer is not None:
-                with viewer.lock():
-                    viewer.sync()
+                viewer.sync()
                 if not viewer.is_running():
                     break
                 time.sleep(max(0., env.dt * .5))
