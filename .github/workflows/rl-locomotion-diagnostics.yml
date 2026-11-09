@@ -1,0 +1,68 @@
+name: Quadruped RL Actuator and Behavior Diagnostics
+
+on:
+  push:
+    branches:
+      - feature/rl-locomotion-diagnostics
+  workflow_dispatch:
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    defaults:
+      run:
+        working-directory: mujoco_cad_preview
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install CPU MuJoCo and PPO runtime
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
+          python -m pip install -r requirements_new_pc.txt
+          python -m pip install -r requirements_rl.txt
+      - name: Regenerate schematic robot with 36 joints and 8 loops
+        run: |
+          python make_seed.py
+          python build_preview.py audit_excerpt_reference.json --out output
+          python solve_motion.py
+          python build_physics_v1.py --schematic
+          python build_rl_model.py
+      - name: Fixed-base actuator pulses
+        run: |
+          python probe_actuators.py --settle-s .05 --pulse-s .10
+      - name: Short training + diagnostics for zero-control comparison
+        run: |
+          python train_rl.py --stage stand --steps 64 --smoke --save output/rl_runs/smoke_sim_ppo.zip
+          python compare_to_zero.py --policy output/rl_runs/smoke_sim_ppo.zip --direction forward --seconds .5
+      - name: Assert diagnostics are complete and numeric
+        run: |
+          python - <<'PY'
+          import json
+          import math
+          from pathlib import Path
+          a=json.loads(Path('output/rl_runs/actuator_probe.json').read_text())
+          assert len(a['results'])==12
+          assert len(a['foot_sites'])==4
+          assert all(math.isfinite(k['max_foot_effect_cm']) for k in a['results'])
+          b=json.loads(Path('output/rl_runs/zero_vs_ppo_smoke_sim_ppo_forward.json').read_text())
+          assert len(b['comparison'])==1
+          c=b['comparison'][0]
+          assert 'cautious_command_tracking_candidate' in c
+          for source in ['zero_action_baseline','trained_policy']:
+              assert 'action_saturation_fraction' in c[source]
+              assert 'mean_servo_tracking_error_deg' in c[source]
+              assert 'force_limit_fraction' in c[source]
+              assert 'fraction_feet_15mm_above_floor' in c[source]
+          print('Diagnostic smoke passed (schematic only; NOT validated walking).')
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: rl-actuator-diagnostics
+          path: |
+            mujoco_cad_preview/output/rl_runs/actuator_probe.json
+            mujoco_cad_preview/output/rl_runs/zero_vs_ppo_smoke_sim_ppo_forward.json
