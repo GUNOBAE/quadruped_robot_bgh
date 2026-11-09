@@ -39,6 +39,7 @@ jobs:
           python check_rl.py
           python train_rl.py --stage stand --steps 64 --smoke --save output/rl_runs/smoke_sim_ppo.zip
           python evaluate_rl.py --policy output/rl_runs/smoke_sim_ppo.zip --direction forward --seconds .5
+          python compare_to_zero.py --policy output/rl_runs/smoke_sim_ppo.zip --direction forward --seconds .5
       - name: Assert generated PPO training artifacts
         run: |
           python - <<'PY'
@@ -54,7 +55,12 @@ jobs:
           assert json.load(open('output/rl_v0_preflight.json'))['gym_check_env_passed']
           results=json.load(open('output/rl_runs/direction_evaluation.json'))['results']
           assert len(results) == 1 and results[0]['direction']=='forward'
-          print('RL V0 smoke passed. SIMULATION ONLY; NOT trained walking.')
+          comparison=json.load(open('output/rl_runs/zero_vs_ppo_smoke_sim_ppo_forward.json'))['comparison'][0]
+          assert comparison['direction']=='forward'
+          assert comparison['zero_action_baseline']['reward_components_total']
+          assert comparison['trained_policy']['reward_components_total']
+          assert Path('output/rl_runs/direction_evaluation_smoke_sim_ppo_forward.json').is_file()
+          print('RL V0 smoke passed with reward breakdown and zero-action baseline. SIMULATION ONLY.')
           PY
       - uses: actions/upload-artifact@v4
         if: always()
