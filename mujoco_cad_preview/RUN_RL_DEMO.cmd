@@ -25,12 +25,12 @@ echo 5 - Rotate LEFT
 echo 6 - Rotate RIGHT
 choice /C 0123456 /N /M "Choose direction (0..6): "
 set "MODE=all"
-if errorlevel 7 set "MODE=turn_right" & goto selected
-if errorlevel 6 set "MODE=turn_left" & goto selected
-if errorlevel 5 set "MODE=right" & goto selected
-if errorlevel 4 set "MODE=left" & goto selected
-if errorlevel 3 set "MODE=backward" & goto selected
-if errorlevel 2 set "MODE=forward" & goto selected
+if errorlevel 7 (set "MODE=turn_right" & goto selected)
+if errorlevel 6 (set "MODE=turn_left" & goto selected)
+if errorlevel 5 (set "MODE=right" & goto selected)
+if errorlevel 4 (set "MODE=left" & goto selected)
+if errorlevel 3 (set "MODE=backward" & goto selected)
+if errorlevel 2 (set "MODE=forward" & goto selected)
 :selected
 if "%MODE%"=="all" (
   "%PY%" evaluate_rl.py --direction all --seconds 6
