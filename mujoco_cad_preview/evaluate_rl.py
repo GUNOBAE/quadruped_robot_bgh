@@ -35,7 +35,11 @@ def run_direction(policy: PPO, direction: str, obs_mode: str,
         nonlocal obs, total_reward, fell
         for _ in range(env.max_steps):
             action, _ = policy.predict(obs, deterministic=True)
-            obs, reward, term, trunc, info = env.step(action)
+            if viewer is not None:
+                with viewer.lock():
+                    obs, reward, term, trunc, info = env.step(action)
+            else:
+                obs, reward, term, trunc, info = env.step(action)
             measures.append(info)
             total_reward += reward
             if viewer is not None:
