@@ -39,9 +39,31 @@ def trial(policy, direction, seconds, seed, mode):
             action = np.asarray(action, dtype=np.float64)
             obs, reward, terminated, truncated, info = env.step(action)
             results.append((float(reward), dict(info)))
+            actual_joint = env.data.qpos[env.joint_qadr]
+            commanded_joint = env.data.ctrl
+            force_limit = np.maximum(
+                np.abs(env.model.actuator_forcerange[:, 0]),
+                np.abs(env.model.actuator_forcerange[:, 1])
+            )
+            valid_limit = force_limit > 1e-6
+            torque_sat = np.mean(
+                np.abs(env.data.actuator_force[valid_limit])
+                >= .95 * force_limit[valid_limit]
+            ) if np.any(valid_limit) else 0.
+            toe_clearance = np.maximum(
+                0., env.data.site_xpos[env.foot_site_ids, 2]
+                - env.model.geom_size[env.feet_geom_ids, 0]
+            )
             commands.append({
                 "mean_abs_action": float(np.mean(np.abs(action))),
                 "mean_abs_change": float(np.mean(np.abs(action - previous))),
+                "action_saturation_fraction": float(np.mean(np.abs(action) >= .9)),
+                "mean_servo_tracking_error_deg": float(
+                    np.degrees(np.mean(np.abs(commanded_joint - actual_joint)))
+                ),
+                "force_limit_fraction": float(torque_sat),
+                "feet_clearing_15mm": float(np.mean(toe_clearance >= .015)),
+                "max_toe_clearance_cm": float(100 * np.max(toe_clearance)),
             })
             previous = action
             if terminated or truncated:
@@ -87,6 +109,21 @@ def trial(policy, direction, seconds, seed, mode):
             )),
             "mean_abs_change": float(np.mean(
                 [v["mean_abs_change"] for v in commands]
+            )),
+            "action_saturation_fraction": float(np.mean(
+                [v["action_saturation_fraction"] for v in commands]
+            )),
+            "mean_servo_tracking_error_deg": float(np.mean(
+                [v["mean_servo_tracking_error_deg"] for v in commands]
+            )),
+            "force_limit_fraction": float(np.mean(
+                [v["force_limit_fraction"] for v in commands]
+            )),
+            "fraction_feet_15mm_above_floor": float(np.mean(
+                [v["feet_clearing_15mm"] for v in commands]
+            )),
+            "max_toe_clearance_cm": float(max(
+                v["max_toe_clearance_cm"] for v in commands
             )),
             "fell": bool(last["fall"]),
         }
@@ -136,6 +173,28 @@ def main():
             primary_axis = 0
         tracking_gain = float(errors_baseline[primary_axis] -
                               errors_trained[primary_axis])
+        command_scale = abs(float(DIRECTIONS[direction][primary_axis]))
+        normalized_gain = (tracking_gain / max(command_scale, 1e-9)
+                           if command_scale else 0.)
+        crouch_vs_zero_m = (baseline["end_base_height_m"] -
+                            trained["end_base_height_m"])
+        # A small velocity improvement is not enough to claim useful walking.
+        # Stand/stop is treated separately from directional gait.
+        if direction == "stop":
+            candidate = bool(
+                not trained["fell"]
+                and trained["max_tilt_deg"] < 10.
+                and abs(trained["body_relative_displacement"]["forward_m"]) < .01
+                and abs(trained["body_relative_displacement"]["left_m"]) < .01
+            )
+        else:
+            candidate = bool(
+                not trained["fell"]
+                and normalized_gain >= .50
+                and crouch_vs_zero_m < .01
+                and trained["max_tilt_deg"] < 20.
+                and trained["mean_foot_contacts"] >= 2.0
+            )
         rows.append({
             "direction": direction,
             "zero_action_baseline": baseline,
@@ -143,11 +202,13 @@ def main():
             "total_reward_gain": float(reward_gain),
             "primary_axis_velocity_error_reduction": tracking_gain,
             "improved_primary_axis_tracking": tracking_gain > 0,
-            "policy_better_than_doing_nothing": (
-                tracking_gain > 0 and
-                not trained["fell"] and
-                (not baseline["fell"] or
-                 trained["duration_s"] >= baseline["duration_s"])
+            "normalized_primary_axis_gain": float(normalized_gain),
+            "crouch_vs_zero_m": float(crouch_vs_zero_m),
+            "cautious_command_tracking_candidate": candidate,
+            "warning": (
+                "Previous policy_better_than_doing_nothing was an overly "
+                "permissive single-axis metric. This diagnostic checks "
+                "body height, tilt and normalized target tracking too."
             ),
         })
         print(
@@ -157,7 +218,11 @@ def main():
             f"base reward={baseline['total_reward']:.1f} "
             f"ppo reward={trained['total_reward']:.1f} | "
             f"fall={trained['fell']} "
-            f"ppo action={trained['mean_abs_action']:.3f}"
+            f"ppo action={trained['mean_abs_action']:.3f} "
+            f"action_sat={trained['action_saturation_fraction']:.0%} "
+            f"servo_err={trained['mean_servo_tracking_error_deg']:.1f}deg "
+            f"force_sat={trained['force_limit_fraction']:.0%} "
+            f"candidate={candidate}"
         )
     report = {
         "policy_file": str(a.policy),
