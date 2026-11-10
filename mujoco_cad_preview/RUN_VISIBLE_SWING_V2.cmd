@@ -16,8 +16,8 @@ if not exist "output\physics_v1.xml" (
  echo ERROR: Missing Physics V1 model; first run original physics setup.
  goto failed
 )
-if not exist "swing_ik_v1.py" (
- echo ERROR: Missing predecessor swing_ik_v1.py.
+if not exist "probe_actuators.py" (
+ echo ERROR: Missing probe_actuators.py (fixed-base bench helper).
  goto failed
 )
 if not exist "swing_ik_v2.py" (
