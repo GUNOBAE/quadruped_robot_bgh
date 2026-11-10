@@ -1,0 +1,55 @@
+name: Quadruped Single Leg Numerical IK Smoke
+on:
+  push:
+    branches: [feature/single-leg-swing-ik-v1]
+  workflow_dispatch:
+
+jobs:
+  numerical-ik:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: mujoco_cad_preview
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install MuJoCo and numpy/scipy
+        run: |
+          python -m pip install -r requirements_new_pc.txt
+      - name: Rebuild non-CAD schematic reference
+        run: |
+          python make_seed.py
+          python build_preview.py audit_excerpt_reference.json --out output
+          python solve_motion.py
+          python build_physics_v1.py --schematic
+      - name: Run SINGLE-LEG closed-loop IK smoke, no GUI
+        run: |
+          python swing_ik_v1.py --leg FL --seconds 1 --lift-mm 5 --forward-mm 3
+      - name: Assert diagnostic report exists and is finite
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import json
+          import math
+          s=json.loads(Path('output/ik_swing_report.json').read_text('utf-8'))
+          assert s['leg']=='FL'
+          assert s['simulation_only'] is True
+          assert len(s['motor_names']) == 3
+          assert s['frames'] > 10
+          assert len(s['jacobian_m_per_rad'])==3
+          assert math.isfinite(s['achieved_peak_lift_mm'])
+          assert math.isfinite(s['max_loop_gap_mm'])
+          assert Path('output/ik_swing_trajectory.csv').is_file()
+          print(s['status'], s['achieved_peak_lift_mm'], s['achieved_end_forward_mm'])
+          print("No gravity/contact/hardware. This test is not walking.")
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: single-leg-ik-swing-smoke
+          path: |
+            mujoco_cad_preview/output/ik_swing_report.json
+            mujoco_cad_preview/output/ik_swing_trajectory.csv
