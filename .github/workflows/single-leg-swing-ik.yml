@@ -25,9 +25,11 @@ jobs:
           python build_preview.py audit_excerpt_reference.json --out output
           python solve_motion.py
           python build_physics_v1.py --schematic
-      - name: Run SINGLE-LEG closed-loop IK smoke, no GUI
+      - name: Run every leg with conservative 6mm lift / 5mm forward, no GUI
         run: |
-          python swing_ik_v1.py --leg FL --seconds 1 --lift-mm 5 --forward-mm 3
+          for LEG in FL FR BL BR; do
+            python swing_ik_v1.py --leg "$LEG" --seconds 1 --lift-mm 6 --forward-mm 5
+          done
       - name: Assert diagnostic report exists and is finite
         run: |
           python - <<'PY'
@@ -35,7 +37,7 @@ jobs:
           import json
           import math
           s=json.loads(Path('output/ik_swing_report.json').read_text('utf-8'))
-          assert s['leg']=='FL'
+          assert s['leg']=='BR'
           assert s['simulation_only'] is True
           assert len(s['motor_names']) == 3
           assert s['frames'] > 10
