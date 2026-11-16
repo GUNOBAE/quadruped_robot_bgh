@@ -1,0 +1,92 @@
+name: Live console QuickEdit repair smoke
+on:
+  push:
+    branches: [feature/crawl-night-optimization]
+    paths:
+      - mujoco_cad_preview/repair_crawl_console.py
+      - .github/workflows/console-repair-smoke.yml
+  workflow_dispatch:
+jobs:
+  console-repair:
+    runs-on: windows-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Repair an existing test console and preserve process/modes
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json, os, pathlib, subprocess, sys, tempfile, time
+          from datetime import datetime
+          root=pathlib.Path('mujoco_cad_preview').resolve()
+          helper=root/'repair_crawl_console.py'
+          compile(helper.read_text('utf-8'),str(helper),'exec')
+          target_source = '''
+          import ctypes as C
+          from ctypes import wintypes as W
+          import json,sys,time
+          from pathlib import Path
+          k=C.WinDLL('kernel32',use_last_error=True)
+          k.CreateFileW.argtypes=[W.LPCWSTR,W.DWORD,W.DWORD,C.c_void_p,W.DWORD,W.DWORD,W.HANDLE]
+          k.CreateFileW.restype=W.HANDLE
+          k.GetConsoleMode.argtypes=[W.HANDLE,C.POINTER(W.DWORD)]
+          k.GetConsoleMode.restype=W.BOOL
+          k.SetConsoleMode.argtypes=[W.HANDLE,W.DWORD]
+          k.SetConsoleMode.restype=W.BOOL
+          h=k.CreateFileW('CONIN$',0xC0000000,3,None,3,0,None)
+          m=W.DWORD()
+          assert k.GetConsoleMode(h,C.byref(m)),C.get_last_error()
+          assert k.SetConsoleMode(h,m.value|0x40|0x80),C.get_last_error()
+          Path(sys.argv[1]).write_text('ready')
+          while True: time.sleep(.1)
+          '''
+          import textwrap
+          with tempfile.TemporaryDirectory(prefix='console repair ') as temp:
+              temp=pathlib.Path(temp)
+              target=temp/'crawl_night.py'
+              target.write_text(textwrap.dedent(target_source),'utf-8')
+              ready=temp/'ready.txt'
+              proc=subprocess.Popen([sys.executable,str(target),str(ready)],
+                    stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,
+                    creationflags=subprocess.CREATE_NEW_CONSOLE)
+              try:
+                  for _ in range(100):
+                      if ready.exists(): break
+                      if proc.poll() is not None: raise RuntimeError('Test target exited before console setup')
+                      time.sleep(.1)
+                  assert ready.exists(),'No ready signal'
+                  run=root/'output/crawl_night'/(datetime.now().strftime('%Y%m%d_%H%M%S')+f'_{proc.pid}')
+                  run.mkdir(parents=True)
+                  (run/'manifest.json').write_text('{}')
+                  (run.parent/'LATEST.txt').write_text(str(run),'utf-8')
+                  def repair():
+                      result=subprocess.run([sys.executable,str(helper)],capture_output=True,text=True,timeout=40)
+                      print(result.stdout,result.stderr)
+                      assert result.returncode==0,result
+                      report=max((root/'output/console_repair').glob('*.json'),key=lambda p:p.stat().st_mtime_ns)
+                      return json.loads(report.read_text('utf-8'))
+                  first=repair()
+                  assert first['status']=='QUICK_EDIT_DISABLED',first
+                  assert first['quick_edit_before'] and not first['quick_edit_after'],first
+                  assert (first['mode_before'] & ~0xC0)==(first['mode_after'] & ~0xC0),first
+                  assert proc.poll() is None,'Original target was stopped'
+                  second=repair()
+                  assert second['status']=='ALREADY_DISABLED',second
+                  assert proc.poll() is None,'Original target was stopped'
+                  proc.terminate();proc.wait(timeout=10)
+                  stale=subprocess.run([sys.executable,str(helper)],capture_output=True,text=True,timeout=25)
+                  assert stale.returncode!=0,'Stale PID should be refused'
+                  print('PASS: cross-console True->False, unrelated modes preserved, target survives, repeat/stale checks passed.')
+                  print('Does NOT reproduce the user\'s interactive selection freeze or certify its root cause.')
+              finally:
+                  if proc.poll() is None:
+                      proc.terminate();proc.wait(timeout=10)
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: console-repair-reports
+          path: mujoco_cad_preview/output/console_repair/*.json
