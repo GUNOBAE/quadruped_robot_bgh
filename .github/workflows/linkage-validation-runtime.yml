@@ -14,7 +14,7 @@ jobs:
           python-version: '3.13'
       - name: Download official runtime wheels for offline private-CAD validation
         run: |
-          python -m pip download --only-binary=:all: --dest wheels mujoco==3.3.7
+          python -m pip download --only-binary=:all: --dest wheels mujoco==3.17.0
       - uses: actions/upload-artifact@v4
         with:
           name: mujoco-validation-cp313-linux
