@@ -1,0 +1,69 @@
+name: Overnight crawl optimizer smoke
+on:
+  push:
+    branches: [feature/crawl-night-optimization]
+  workflow_dispatch:
+jobs:
+  smoke:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 12
+    defaults:
+      run:
+        working-directory: mujoco_cad_preview
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install existing numeric runtime
+        run: python -m pip install 'mujoco>=3.3.7,<4' numpy scipy
+      - name: Syntax and rejected-report handling
+        shell: bash
+        run: |
+          python -m py_compile crawl_night.py crawl_tune_trial.py linkage_core.py baseline_crawl.py
+          python - <<'PY'
+          import tempfile
+          from pathlib import Path
+          from crawl_night import summarize,ratios
+          from crawl_tune_trial import write_json,check_params,DEFAULT
+          check_params(DEFAULT)
+          assert ratios(None,{'passed':True}) is None
+          with tempfile.TemporaryDirectory() as d:
+              p=Path(d)
+              write_json(p/'manifest.json',{'source_sha256':'test'})
+              summarize(p,'TEST',[{'trial':'reject','passed':False,'comparison':None}],[],{})
+              assert (p/'results_bundle.zip').is_file()
+          print('Rejected-trial serialization passed.')
+          PY
+      - name: Rebuild schematic physics for cross-platform runtime test
+        run: |
+          python make_seed.py
+          python build_preview.py audit_excerpt_reference.json --out output
+          python build_physics_v1.py --schematic
+      - name: Exercise bounded subprocess driver with baseline failure gate
+        run: python -u crawl_night.py --quick-test --hours 0.15
+      - name: Verify truthful final state and archive
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import json
+          p=Path(Path('output/crawl_night/LATEST.txt').read_text('utf-8').strip())
+          status=json.loads((p/'status.json').read_text('utf-8'))['status']
+          assert status in {'QUICK_TEST_COMPLETE','ORIGINAL_BASELINE_FAILED_NO_SEARCH','TIMED_BASELINE_FAILED_NO_SEARCH','REFERENCE_REPRODUCTION_MISMATCH','SCREEN_BASELINE_FAILED'},status
+          assert (p/'results_bundle.zip').is_file()
+          print('Runtime/report gate passed:',status)
+          print('This schematic test is NOT proof that the user CAD walks faster.')
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: crawl-night-${{ matrix.os }}
+          path: |
+            mujoco_cad_preview/output/crawl_night/**/results_bundle.zip
+            mujoco_cad_preview/output/crawl_night/**/console.log
+            mujoco_cad_preview/output/crawl_night/**/status.json
