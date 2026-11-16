@@ -117,7 +117,7 @@ def summarize(run,status,screen,finals,selected):
     cols=['trial','passed','min_speed_ratio','max_work_per_distance_ratio','stable','improved']
     with (run/'ranking.csv').open('w',encoding='utf-8-sig',newline='') as f:
         w=csv.DictWriter(f,fieldnames=cols);w.writeheader()
-        for x in sorted(screen,key=lambda a:a.get('comparison',{}).get('score',-1e6),reverse=True):
+        for x in sorted(screen,key=lambda a:(a.get('comparison') or {}).get('score',-1e6),reverse=True):
             c=x.get('comparison') or {}
             w.writerow(dict(trial=x['trial'],passed=x['passed'],**{k:c.get(k,'') for k in cols[2:]}))
     text=['# Overnight crawl parameter optimization', '', 'Status: '+status,
@@ -244,6 +244,7 @@ def main():
         print('BASELINE VERIFIED. STARTING TIMING/STRIDE SEARCH.',flush=True)
         summarize(run,'SEARCHING',screen,finals,selected)
         rng=random.Random(a.seed);probes=candidate_stream(a.seed);seen={key(DEFAULT)}
+        if a.quick_test:probes=probes[-1:]
         elite=[(0.,dict(DEFAULT))];stale=0;best=-1e6;errors=0
         count=1 if a.quick_test else a.max_trials
         for i in range(count):
@@ -325,9 +326,11 @@ def main():
         status='ERROR_NO_SUCCESS_CLAIM';(run/'error.txt').write_text(traceback.format_exc(),encoding='utf-8')
         traceback.print_exc()
     finally:
-        summarize(run,status,screen,finals,selected)
-        if awake:ctypes.windll.kernel32.SetThreadExecutionState(0x80000000)
-        lock.close()
+        try:
+            summarize(run,status,screen,finals,selected)
+        finally:
+            if awake:ctypes.windll.kernel32.SetThreadExecutionState(0x80000000)
+            lock.close()
         print('CRAWL NIGHT FINISHED:',status,flush=True)
         print('REPORT:',run/'SUMMARY.md',flush=True)
         print('SHARE:',run/'results_bundle.zip',flush=True)
