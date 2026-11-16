@@ -1,0 +1,64 @@
+name: Budgeted DayLab smoke
+on:
+  push:
+    branches: [feature/daylab-budgeted-experiments]
+  workflow_dispatch:
+jobs:
+  smoke:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: mujoco_cad_preview
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install CPU dependencies
+        run: |
+          python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
+          python -m pip install "mujoco>=3.3.7,<4" "numpy<3" scipy "gymnasium<2" "stable-baselines3<3"
+      - name: Build existing schematic dynamics
+        run: |
+          python make_seed.py
+          python build_preview.py audit_excerpt_reference.json --out output
+          python build_physics_v1.py --schematic
+          python build_rl_model.py
+      - name: Test independent trials and reports
+        run: python daylab.py --smoke
+      - name: Assert all trial checkpoints and reports
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          run=Path(Path('output/daylab/LATEST.txt').read_text('utf-8').strip())
+          status=json.loads((run/'status.json').read_text('utf-8'))
+          print(status)
+          assert json.loads((run/'preflight.json').read_text('utf-8'))['status']=='PASS'
+          ranking=json.loads((run/'ranking.json').read_text('utf-8'))
+          assert len(ranking)==4,ranking
+          assert {r['variant'] for r in ranking}=={'A_reference','B_low_noise','C_posture','D_gait_residual'}
+          for r in ranking:
+              assert Path(r['best_policy']).is_file()
+              h=Path(r['best_policy']).parent/'holdout.json'
+              assert h.is_file(),h
+              assert len(json.loads(h.read_text('utf-8'))['episodes'])==3
+          assert (run/'results_bundle.zip').is_file()
+          assert (run/'SUMMARY.md').is_file()
+          print('Four training pipelines passed; NO claim of walking success.')
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: daylab-${{ matrix.os }}
+          path: |
+            mujoco_cad_preview/output/daylab/**/results_bundle.zip
+            mujoco_cad_preview/output/daylab/**/console.log
+            mujoco_cad_preview/output/daylab/**/status.json
+            mujoco_cad_preview/output/daylab/**/error.log
