@@ -1,0 +1,92 @@
+name: Stride speed and smoothness runtime smoke
+on:
+  push:
+    branches: [feature/stride-speed-smooth-v1]
+  workflow_dispatch:
+jobs:
+  smoke:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 12
+    defaults:
+      run:
+        shell: bash
+        working-directory: mujoco_cad_preview
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Install numeric runtime
+        run: python -m pip install 'mujoco==3.17.0' 'numpy<3' 'scipy<2'
+      - name: Compile and reject fast-but-rough false successes
+        run: |
+          python -m py_compile stride_trial.py stride_lab.py
+          python - <<'PY'
+          import copy
+          from stride_trial import DEFAULT, COMMANDS, ORDERS, valid
+          from stride_lab import compare
+          assert len(COMMANDS)==10 and len(ORDERS)==6
+          valid(DEFAULT)
+          try:
+              valid(dict(DEFAULT,stride_mm=200))
+          except ValueError: pass
+          else: raise AssertionError('Ungrounded stride accepted')
+          m=dict(speed=4.44,speed_unit='mm/s',sway_mm=60.,accel_rms=.446,jerk_rms=10.,
+                 reverse_fraction=.22,stall_fraction=.03,longest_stall_s=.10,max_tilt_deg=3.,work_per_progress=100.)
+          old=dict(passed=True,direction='backward',cycles=24,friction=1.,metrics=m)
+          new=copy.deepcopy(old);new['metrics'].update(speed=10.,sway_mm=40.,accel_rms=.65,reverse_fraction=.1)
+          c=compare(new,old)
+          assert c['speed_ratio']>2 and not c['target_met']
+          assert not c['checks']['acceleration_not_worse']
+          new['metrics'].update(accel_rms=.4,jerk_rms=9.)
+          assert compare(new,old)['target_met']
+          new['cycles']=12
+          try: compare(new,old)
+          except ValueError: pass
+          else: raise AssertionError('Unequal-cycle comparison accepted')
+          assert compare({'passed':False},old) is None
+          print('PASS: all direction list, guarded parameters, speed+smoothness AND gates')
+          PY
+      - name: Detached two-worker execution, rejected source and completion notification record
+        run: |
+          python - <<'PY'
+          import json,pathlib,subprocess,sys,time
+          source=pathlib.Path('invalid_for_robot.xml').resolve()
+          source.write_text('<mujoco><compiler inertiafromgeom="false"/></mujoco>')
+          subprocess.run([sys.executable,'stride_lab.py','--start','--quick-test','--no-alert',
+              '--hours','.1','--workers','2','--trials','2','--commands','forward,left','--source',str(source)],check=True)
+          run=pathlib.Path(pathlib.Path('output/stride_lab/LATEST.txt').read_text().strip())
+          end=time.monotonic()+180
+          while time.monotonic()<end:
+              if (run/'notification.json').exists(): break
+              time.sleep(.5)
+          else:
+              (run/'STOP').write_text('CI timeout')
+              raise AssertionError('No completion record')
+          state=json.loads((run/'status.json').read_text())
+          assert state['state']=='SOURCE_BASELINES_FAILED',state
+          assert state['active']==[] and (run/'results_bundle.zip').is_file()
+          assert (run/'completion.json').is_file()
+          events=[json.loads(x) for x in (run/'events.jsonl').read_text().splitlines()]
+          active=set();peak=0
+          for e in events:
+              if e['event']=='start': active.add(e['pid']);peak=max(peak,len(active))
+              elif e['event']=='end': active.discard(e['pid'])
+          assert peak==2 and not active,(peak,active)
+          print('PASS: detached master, two worker processes, source failure gate, cleanup, archive, silent notification')
+          print('Runtime test only. No claim of robot walking or audible Windows alarm.')
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: stride-runtime-${{ matrix.os }}
+          path: |
+            mujoco_cad_preview/output/stride_lab/*/master.log
+            mujoco_cad_preview/output/stride_lab/*/events.jsonl
+            mujoco_cad_preview/output/stride_lab/*/status.json
+            mujoco_cad_preview/output/stride_lab/*/completion.json
+            mujoco_cad_preview/output/stride_lab/*/notification.json
