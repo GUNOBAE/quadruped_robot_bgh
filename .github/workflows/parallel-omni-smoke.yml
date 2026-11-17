@@ -1,0 +1,82 @@
+name: Parallel omni crawl runtime smoke
+on:
+  push:
+    branches: [feature/parallel-omni-crawl-v1]
+  workflow_dispatch:
+jobs:
+  smoke:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: bash
+        working-directory: mujoco_cad_preview
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Install numerical runtime only
+        run: python -m pip install 'mujoco==3.17.0' 'numpy<3' 'scipy<2'
+      - name: Compile and test command normalization
+        run: |
+          python -m py_compile omni_trial.py omni_parallel.py linkage_core.py
+          python - <<'PY'
+          from omni_trial import DIRECTIONS,DEFAULT,validate_params
+          from omni_parallel import compare
+          assert len(DIRECTIONS)==11
+          assert abs(sum(x*x for x in DIRECTIONS['forward_left'][:2])-1)<1e-12
+          assert compare({'passed':False},{'passed':True}) is None
+          try:
+              validate_params(dict(DEFAULT,stride_mm=1000))
+          except ValueError:
+              pass
+          else:
+              raise AssertionError('Invalid control parameter accepted')
+          PY
+      - name: Generate public schematic model, not user private CAD
+        run: |
+          python make_seed.py
+          python build_preview.py audit_excerpt_reference.json --out output
+          python build_physics_v1.py --schematic
+      - name: Launch detached master and confirm worker overlap
+        run: |
+          python - <<'PY'
+          import json, pathlib, subprocess, sys, time
+          subprocess.run([sys.executable,'omni_parallel.py','--start','--quick-test',
+              '--hours','.1','--workers','2','--commands','forward,left','--trials','2'],check=True)
+          run=pathlib.Path(pathlib.Path('output/omni_parallel/LATEST.txt').read_text().strip())
+          end=time.monotonic()+330
+          while time.monotonic()<end:
+              state=json.loads((run/'status.json').read_text('utf-8'))
+              if state['state'] not in ('STARTING','RUNNING'): break
+              time.sleep(1)
+          else:
+              (run/'STOP').write_text('CI timeout')
+              raise AssertionError('Batch did not finish within bounded smoke budget')
+          assert state['state'] in ('SMOKE_ONLY_NOT_QUALIFIED','NO_REFERENCE_GAIT_NO_SEARCH'),state
+          assert (run/'results_bundle.zip').is_file()
+          events=[json.loads(x) for x in (run/'events.jsonl').read_text().splitlines()]
+          active=set();peak=0
+          for e in events:
+              if e['event']=='start':active.add(e['pid']);peak=max(peak,len(active))
+              if e['event']=='end':active.discard(e['pid'])
+          assert peak==2,(peak,events)
+          assert not active,active
+          assert json.loads((run/'manifest.json').read_text())['PPO'] is False
+          print('PASS: detached launcher, two concurrent worker PIDs, terminal state, archive')
+          print('This is a runtime smoke check, NOT proof of walking on the user CAD.')
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: parallel-omni-smoke-${{ matrix.os }}
+          path: |
+            mujoco_cad_preview/output/omni_parallel/*/status.json
+            mujoco_cad_preview/output/omni_parallel/*/master.log
+            mujoco_cad_preview/output/omni_parallel/*/events.jsonl
+            mujoco_cad_preview/output/omni_parallel/*/results_bundle.zip
