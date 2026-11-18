@@ -1,0 +1,53 @@
+name: Quadruped Visible Swing V2 Numerical IK Smoke
+on:
+  push:
+    branches: [feature/visible-swing-v2]
+  workflow_dispatch:
+jobs:
+  visible-swing:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: mujoco_cad_preview
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install MuJoCo Python
+        run: python -m pip install -r requirements_new_pc.txt
+      - name: Regenerate schematic 36-joint eight-loop model
+        run: |
+          python make_seed.py
+          python build_preview.py audit_excerpt_reference.json --out output
+          python build_physics_v1.py --schematic
+      - name: Numerical IK 22mm lift 20mm stride on four legs
+        run: |
+          for LEG in FL FR BL BR; do
+            python swing_ik_v2.py --leg "$LEG" --lift-mm 22 --forward-mm 20 --seconds 3
+          done
+      - name: Verify first cycle trajectory and constrained controls
+        run: |
+          python - <<'PY'
+          import json,csv,math
+          from pathlib import Path
+          p=Path('output/ik_swing_visible_v2_report.json')
+          r=json.loads(p.read_text('utf-8'))
+          assert r['leg']=='BR' and r['simulation_only']
+          assert r['frames']>100
+          assert math.isfinite(r['achieved_peak_lift_mm'])
+          assert math.isfinite(r['achieved_peak_forward_mm'])
+          assert r['max_loop_gap_mm']<2
+          rows=list(csv.DictReader(open('output/ik_swing_visible_v2_trajectory.csv',encoding='utf-8-sig')))
+          assert set(t['phase'] for t in rows)=={'SWING','RETURN_NO_CONTACT'}
+          assert len(rows)==r['frames']
+          print('V2 result:',r['status'],r['achieved_peak_lift_mm'],r['achieved_peak_forward_mm'],r['max_position_error_mm'])
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: visible-swing-v2-smoke
+          path: |
+            mujoco_cad_preview/output/ik_swing_visible_v2_report.json
+            mujoco_cad_preview/output/ik_swing_visible_v2_trajectory.csv
